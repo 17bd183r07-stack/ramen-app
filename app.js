@@ -4,7 +4,7 @@ import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
   doc, getDoc, setDoc, addDoc, deleteDoc, updateDoc, collection, onSnapshot, runTransaction, serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, SEARCH_CENTER } from "./config.js";
+import { firebaseConfig } from "./config.js";
 
 const GENRES = ["醤油","塩","味噌","豚骨","家系","二郎系","まぜそば","その他"];
 
@@ -214,19 +214,20 @@ function postView(){
 }
 function candidates(){
   const d = draft, q = d.q.trim();
-  if (q.length < 2) return `<p class="note">2文字以上入れると、登録済みのお店と地図データの候補が出ます。</p>`;
+  if (q.length < 2) return `<p class="note">2文字以上入れると、登録済みのお店と全国の地図データから候補が出ます。地名を足すと見つかりやすくなります（例：一蘭 博多）。</p>`;
   const reg = [...S.shops.values()].filter(s => s.name.includes(q) || (s.area ?? "").includes(q)).slice(0, 8);
   const osm = d.results.filter(r => !S.shops.has(r.id));
   let h = reg.map(s => `<button class="shop" data-pick="${s.id}"><div class="body"><div class="name">${esc(s.name)}</div><div class="meta">${esc(s.address)}</div></div><span class="tag" style="background:var(--accent-soft);color:var(--accent)">登録済み</span></button>`).join("");
   h += osm.map((s, i) => `<button class="shop" data-osm="${d.results.indexOf(s)}"><div class="body"><div class="name">${esc(s.name)}</div><div class="meta">${esc(s.address)}</div></div><span class="note">新規</span></button>`).join("");
   if (d.searching) h += `<p class="note">地図データを検索中…</p>`;
   else if (!reg.length && !osm.length) h += `<p class="empty">候補が見つかりません。店名を短くするか、地名を足してみてください。</p>`;
+  h += `<button class="ghost" data-near>${nearPos ? "現在地の近くを優先中（押すと全国順に戻す）" : "現在地の近くの店を優先する"}</button>`;
   h += `<button class="ghost" data-manual>候補にない店を「${esc(q)}」で登録</button><p class="src">店舗データ © OpenStreetMap contributors</p>`;
   return h;
 }
 
 /* OpenStreetMap（Photon）で店を探す。入力が止まってから1回だけ問い合わせる */
-let searchTimer = null, searchSeq = 0;
+let searchTimer = null, searchSeq = 0, nearPos = null;
 function searchOsm(){
   clearTimeout(searchTimer);
   const q = draft.q.trim();
@@ -234,7 +235,9 @@ function searchOsm(){
   draft.searching = true;
   searchTimer = setTimeout(async () => {
     const seq = ++searchSeq;
-    const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=10&lat=${SEARCH_CENTER.lat}&lon=${SEARCH_CENTER.lon}`
+    // 日本全国から探す。「近くを優先」を押したときだけ現在地の近くを上に出す
+    const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=15&bbox=122.9,24.0,146.0,45.6`
+      + (nearPos ? `&lat=${nearPos.lat}&lon=${nearPos.lon}` : "")
       + "&osm_tag=amenity:restaurant&osm_tag=amenity:fast_food&osm_tag=amenity:food_court&osm_tag=amenity:cafe";
     try {
       const res = await fetch(url); const js = await res.json();
@@ -336,6 +339,12 @@ function bindCands(){
   const v = $("#view");
   v.querySelectorAll("[data-pick]").forEach(b => b.onclick = () => { draft.shopId = b.dataset.pick; render(); });
   v.querySelectorAll("[data-osm]").forEach(b => b.onclick = () => { draft.newShop = draft.results[+b.dataset.osm]; render(); });
+  v.querySelectorAll("[data-near]").forEach(b => b.onclick = () => {
+    if (nearPos) { nearPos = null; searchOsm(); refreshCands(); return; }
+    if (!navigator.geolocation) return toast("この端末では現在地を使えません");
+    navigator.geolocation.getCurrentPosition(p => { nearPos = { lat: p.coords.latitude, lon: p.coords.longitude }; searchOsm(); refreshCands(); },
+      () => toast("現在地を使えませんでした。ブラウザの位置情報の許可を確認してください"), { timeout: 10000 });
+  });
   v.querySelectorAll("[data-manual]").forEach(b => b.onclick = () => { draft.newShop = { name: draft.q.trim(), address: "", area: "", manual: true }; render(); });
 }
 

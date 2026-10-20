@@ -19,7 +19,7 @@
 | --- | --- |
 | `index.html` / `style.css` | 画面 |
 | `app.js` | 動き（ログイン、検索、投稿、ランキング） |
-| `config.js` | Firebase の設定と、店の検索で優先する地点 |
+| `config.js` | Firebase の設定 |
 | `firestore.rules` | データの守り（招待された人だけ、本人の分だけ書ける） |
 
 ## 公開までの手順
