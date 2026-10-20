@@ -1,0 +1,71 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function me() { return request.auth.uid; }
+    function myEmail() { return request.auth.token.email.lower(); }
+    function ownerDoc() { return /databases/$(database)/documents/meta/owner; }
+    function isOwner() { return signedIn() && exists(ownerDoc()) && get(ownerDoc()).data.uid == me(); }
+    function isMember() { return signedIn() && exists(/databases/$(database)/documents/members/$(me())); }
+    function invited() { return signedIn() && request.auth.token.email_verified == true
+      && exists(/databases/$(database)/documents/invites/$(myEmail())); }
+    function onlyKeys(keys) { return request.resource.data.keys().hasOnly(keys); }
+    function genreOk(g) { return g in ['醤油','塩','味噌','豚骨','家系','二郎系','まぜそば','その他']; }
+
+    // 管理者。最初にログインした1人だけが作れる
+    match /meta/owner {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.uid == me() && onlyKeys(['uid', 'createdAt']);
+    }
+
+    // 招待リスト（ドキュメント名 = 小文字のメールアドレス）。管理者だけが見る・変える
+    match /invites/{email} {
+      allow read: if isOwner() || (signedIn() && email == myEmail());
+      allow create, delete: if isOwner();
+    }
+
+    // メンバー（表示名だけ。メールアドレスは置かない）
+    match /members/{uid} {
+      allow read: if isMember();
+      allow create: if signedIn() && uid == me() && (isOwner() || invited())
+        && onlyKeys(['name', 'joinedAt']) && request.resource.data.name is string
+        && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 20;
+      allow update: if uid == me() && isMember() && onlyKeys(['name', 'joinedAt'])
+        && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 20;
+      allow delete: if isOwner() && uid != me();
+    }
+
+    // お店。登録は誰でも、同じ店は2つ目を作れない（create のみ）。削除は管理者
+    match /shops/{shopId} {
+      allow read: if isMember();
+      allow create: if isMember() && request.resource.data.createdBy == me()
+        && request.resource.data.name is string && request.resource.data.name.size() <= 80;
+      allow delete: if isOwner();
+    }
+
+    // 各メンバーの順位表。本人だけが書ける
+    match /ranks/{uid} {
+      allow read: if isMember();
+      allow write: if isMember() && uid == me();
+    }
+
+    // コメントと小さな写真。本人だけが書ける・消せる
+    match /posts/{postId} {
+      allow read: if isMember();
+      allow create: if isMember() && request.resource.data.uid == me()
+        && genreOk(request.resource.data.genre)
+        && request.resource.data.text.size() <= 1000
+        && (!('thumb' in request.resource.data) || request.resource.data.thumb.size() < 40000);
+      allow delete: if isMember() && resource.data.uid == me();
+    }
+
+    // 大きな写真（縮小済み）。本人だけが書ける・消せる
+    match /photos/{postId} {
+      allow read: if isMember();
+      allow create: if isMember() && request.resource.data.uid == me()
+        && request.resource.data.data.size() < 900000;
+      allow delete: if isMember() && resource.data.uid == me();
+    }
+  }
+}
