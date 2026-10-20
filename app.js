@@ -4,7 +4,7 @@ import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
   doc, getDoc, setDoc, addDoc, deleteDoc, updateDoc, collection, onSnapshot, runTransaction, serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig } from "./config.js";
+import { firebaseConfig, MAPS_API_KEY } from "./config.js";
 
 const GENRES = ["醤油","塩","味噌","豚骨","家系","二郎系","まぜそば","その他"];
 
@@ -130,6 +130,7 @@ function render(){
   bind();
   if (aid && $("#" + aid)) { const el = $("#" + aid); el.focus(); try { if (pos != null) el.setSelectionRange(pos, pos); } catch {} }
   loadPhotos();
+  if (useGoogle) fillGoogleAddress();
 }
 
 const thumbImg = (p, cls = "thumb") => `<img class="${cls}" src="${p.thumb}" alt="">`;
@@ -156,12 +157,12 @@ function shopDetail(id){
   if (!s) return `<button class="link" data-back>‹ お店一覧</button><p class="empty">このお店は削除されました。</p>`;
   const rows = [];
   S.ranks.forEach((r, uid) => Object.entries(r).forEach(([g, l]) => { const i = l.indexOf(id); if (i >= 0 && S.members.has(uid)) rows.push({ uid, g, n: i + 1, of: l.length }); }));
-  const maps = s.lat ? `https://www.google.com/maps/search/?api=1&query=${s.lat},${s.lon}` : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(s.name + " " + (s.address ?? ""))}`;
+  const maps = s.placeId ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(s.name)}&query_place_id=${s.placeId}` : s.lat ? `https://www.google.com/maps/search/?api=1&query=${s.lat},${s.lon}` : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(s.name + " " + (s.address ?? ""))}`;
   const ps = photoPosts(p => p.shopId === id);
   return `<button class="link" data-back>‹ お店一覧</button>
   <div class="detail-head" style="margin-top:10px">
     <div class="name">${esc(s.name)}</div>
-    <div class="note">${esc(s.address || "住所未登録")}</div>
+    <div class="note" ${s.placeId ? `data-gaddr="${esc(s.placeId)}"` : ""}>${s.placeId ? "住所を読み込み中…" : esc(s.address || "住所未登録")}</div>
     <div class="row" style="margin-top:10px"><span>${genresOf(id).map(g => `<span class="tag">${g}</span>`).join("")}</span>
     <a class="link" href="${maps}" target="_blank" rel="noopener">Googleマップで開く ›</a></div>
   </div>
@@ -172,7 +173,7 @@ function shopDetail(id){
     return `<div class="r"><b>${esc(memberName(r.uid))}</b><div style="flex:1;min-width:0"><div>${r.g} ${r.n}位 <span class="note">（${r.of}店中）</span></div>${c ? `<div class="c">${esc(c.text)}</div>` : ""}</div>${p ? zoomBtn(p) : ""}</div>`; }).join("") || `<p class="empty">まだ誰も順位を付けていません。</p>`}</div>
   <button class="primary" style="margin-top:16px" data-rate="${id}">この店を評価する</button>
   ${S.isOwner ? `<button class="link danger" style="margin-top:16px" data-delshop="${id}">このお店を削除する（管理者）</button>` : ""}
-  <p class="src" style="margin-top:12px">${s.osm ? "店舗データ © OpenStreetMap contributors" : "メンバーが手入力で登録"}</p>`;
+  <p class="src" style="margin-top:12px">${s.placeId ? "住所：Google マップ" : s.osm ? "店舗データ © OpenStreetMap contributors" : "メンバーが手入力で登録"}</p>`;
 }
 
 /* 評価する */
@@ -222,12 +223,14 @@ function candidates(){
   if (d.searching) h += `<p class="note">地図データを検索中…</p>`;
   else if (!reg.length && !osm.length) h += `<p class="empty">候補が見つかりません。店名を短くするか、地名を足してみてください。</p>`;
   h += `<button class="ghost" data-near>${nearPos ? "現在地の近くを優先中（押すと全国順に戻す）" : "現在地の近くの店を優先する"}</button>`;
-  h += `<button class="ghost" data-manual>候補にない店を「${esc(q)}」で登録</button><p class="src">店舗データ © OpenStreetMap contributors</p>`;
+  h += `<button class="ghost" data-manual>候補にない店を「${esc(q)}」で登録</button><p class="src">${useGoogle ? "Powered by Google" : "店舗データ © OpenStreetMap contributors"}</p>`;
   return h;
 }
 
-/* OpenStreetMap（Photon）で店を探す。入力が止まってから1回だけ問い合わせる */
+/* 店を探す。config.js に Google のキーがあれば Googleマップ、なければ OpenStreetMap（Photon）。
+   入力が止まってから1回だけ問い合わせる */
 let searchTimer = null, searchSeq = 0, nearPos = null;
+const useGoogle = !!MAPS_API_KEY;
 function searchOsm(){
   clearTimeout(searchTimer);
   const q = draft.q.trim();
@@ -235,6 +238,15 @@ function searchOsm(){
   draft.searching = true;
   searchTimer = setTimeout(async () => {
     const seq = ++searchSeq;
+    if (useGoogle) {
+      try {
+        const results = await searchGoogle(q);
+        if (seq !== searchSeq || !draft) return;
+        draft.results = results;
+      } catch (e) { console.error(e); if (draft) draft.results = []; toast("Googleマップの検索が使えませんでした。手入力でも登録できます"); }
+      if (draft) { draft.searching = false; refreshCands(); }
+      return;
+    }
     // 日本全国から探す。「近くを優先」を押したときだけ現在地の近くを上に出す
     const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=15&bbox=122.9,24.0,146.0,45.6`
       + (nearPos ? `&lat=${nearPos.lat}&lon=${nearPos.lon}` : "")
@@ -251,6 +263,45 @@ function searchOsm(){
     } catch (e) { console.error(e); if (draft) draft.results = []; toast("地図データに接続できませんでした。手入力でも登録できます"); }
     if (draft) { draft.searching = false; refreshCands(); }
   }, 450);
+}
+/* Googleマップ（Places API）。規約で保存できるのは店ごとの番号（placeId）なので、住所は表示のたびに取り寄せる */
+let placesLib = null;
+async function places(){
+  if (placesLib) return placesLib;
+  await new Promise((ok, ng) => {
+    if (window.google?.maps?.importLibrary) return ok();
+    window.__gmReady = ok;
+    const sc = document.createElement("script");
+    sc.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(MAPS_API_KEY)}&v=weekly&language=ja&region=JP&loading=async&callback=__gmReady`;
+    sc.async = true; sc.onerror = ng; document.head.appendChild(sc);
+  });
+  placesLib = await google.maps.importLibrary("places");
+  return placesLib;
+}
+async function searchGoogle(q){
+  const { AutocompleteSuggestion, AutocompleteSessionToken } = await places();
+  if (!draft.gToken) draft.gToken = new AutocompleteSessionToken();
+  const req = { input: q, sessionToken: draft.gToken, language: "ja", region: "jp", includedRegionCodes: ["jp"] };
+  if (nearPos) req.locationBias = { center: { lat: nearPos.lat, lng: nearPos.lon }, radius: 5000 };
+  const { suggestions } = await AutocompleteSuggestion.fetchAutocompleteSuggestions(req);
+  return suggestions.filter(x => x.placePrediction).map(x => { const p = x.placePrediction;
+    return { id: `g-${p.placeId}`, placeId: p.placeId, name: p.mainText?.text ?? p.text.text, address: p.secondaryText?.text ?? "", area: "", google: true }; });
+}
+const addrCache = new Map();
+async function googleAddress(placeId){
+  if (addrCache.has(placeId)) return addrCache.get(placeId);
+  const { Place } = await places();
+  const pl = new Place({ id: placeId });
+  await pl.fetchFields({ fields: ["formattedAddress"] });
+  const a = (pl.formattedAddress ?? "").replace(/^日本、?\s*/, "");
+  addrCache.set(placeId, a);
+  return a;
+}
+function fillGoogleAddress(){
+  document.querySelectorAll("[data-gaddr]").forEach(async el => {
+    try { const a = await googleAddress(el.dataset.gaddr); if (el.isConnected) el.textContent = a || "住所を取得できませんでした"; }
+    catch (e) { console.error(e); if (el.isConnected) el.textContent = "住所を取得できませんでした"; }
+  });
 }
 function refreshCands(){ const c = $("#cands"); if (c) { c.innerHTML = candidates(); bindCands(); } }
 
@@ -338,7 +389,7 @@ function bind(){
 function bindCands(){
   const v = $("#view");
   v.querySelectorAll("[data-pick]").forEach(b => b.onclick = () => { draft.shopId = b.dataset.pick; render(); });
-  v.querySelectorAll("[data-osm]").forEach(b => b.onclick = () => { draft.newShop = draft.results[+b.dataset.osm]; render(); });
+  v.querySelectorAll("[data-osm]").forEach(b => b.onclick = () => { draft.newShop = draft.results[+b.dataset.osm]; draft.gToken = null; render(); });
   v.querySelectorAll("[data-near]").forEach(b => b.onclick = () => {
     if (nearPos) { nearPos = null; searchOsm(); refreshCands(); return; }
     if (!navigator.geolocation) return toast("この端末では現在地を使えません");
@@ -359,11 +410,16 @@ async function submit(){
   const d = draft; if (d.sending) return;
   d.sending = true; render();
   try {
-    // 1. お店（OpenStreetMapの店は番号で見分けるので、同じ店が2つ作られない）
+    // 1. お店（Googleマップ・OpenStreetMapの店は店ごとの番号で見分けるので、同じ店が2つ作られない）
     let shopId = d.shopId;
     if (!shopId && d.newShop) {
       const s = d.newShop;
-      if (s.osm) {
+      if (s.google) {
+        const ref = doc(db, "shops", s.id);
+        await runTransaction(db, async t => { const cur = await t.get(ref);
+          if (!cur.exists()) t.set(ref, { name: s.name, placeId: s.placeId, area: "", createdBy: S.user.uid, createdAt: serverTimestamp() }); });
+        shopId = s.id;
+      } else if (s.osm) {
         const ref = doc(db, "shops", s.id);
         await runTransaction(db, async t => { const cur = await t.get(ref);
           if (!cur.exists()) t.set(ref, { name: s.name, address: s.address, area: s.area, lat: s.lat, lon: s.lon, osm: true, createdBy: S.user.uid, createdAt: serverTimestamp() }); });
