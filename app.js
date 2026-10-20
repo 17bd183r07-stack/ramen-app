@@ -53,8 +53,9 @@ onAuthStateChanged(auth, async user => {
   if (!user) return loginView();
   view(`<p class="loading">読み込み中…</p>`);
   try {
-    const mine = await getDoc(doc(db, "members", user.uid));
-    if (mine.exists()) return start();
+    // まだメンバーでない人は自分のメンバー情報も読めない（守りの仕様）ので、その場合は「未参加」として扱う
+    const isJoined = await getDoc(doc(db, "members", user.uid)).then(d => d.exists(), e => { if (e.code === "permission-denied") return false; throw e; });
+    if (isJoined) return start();
     const owner = await getDoc(doc(db, "meta", "owner"));
     joinView(!owner.exists());
   } catch (e) {
