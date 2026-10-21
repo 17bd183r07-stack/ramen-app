@@ -128,3 +128,4 @@ nav.tabs .post .dot svg { width: 22px; height: 22px; }
 .google-btn { display: inline-flex; align-items: center; justify-content: center; gap: 10px; background: var(--surface); color: var(--ink); border: 1.5px solid var(--line); border-radius: 12px; padding: 14px; font-weight: 700; font-size: 16px; width: 100%; }
 .danger { color: var(--accent); }
 .loading { color: var(--muted); padding: 40px 0; text-align: center; }
+.notice { background: var(--accent-soft); color: var(--ink); border: 1px solid var(--accent); border-radius: 12px; padding: 12px 14px; margin: 0 0 16px; font-size: 14px; line-height: 1.6; }

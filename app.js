@@ -118,6 +118,8 @@ async function start(){
 function go(t, s = null){ tab = t; sub = s; render(); window.scrollTo(0, 0); }
 document.querySelectorAll("nav.tabs button").forEach(b => b.onclick = () => { if (b.dataset.tab === "post" && tab !== "post") draft = null; go(b.dataset.tab); });
 
+const TRIAL_NOTICE_FROM = "2027-01-17T00:00:00+09:00";
+
 function render(){
   if (!S.user) return;
   // 入力中の欄があれば、カーソル位置を保ったまま描き直す
@@ -127,6 +129,8 @@ function render(){
   if (tab === "post") view(postView());
   if (tab === "rank") view(sub ? memberDetail(sub) : rankView());
   if (tab === "mine") view(mineView());
+  // Googleマップの無料体験が終わる前に、管理者にだけお知らせを出す
+  if (S.isOwner && useGoogle && Date.now() >= Date.parse(TRIAL_NOTICE_FROM)) $("#view").insertAdjacentHTML("afterbegin", `<div class="notice">Googleマップの無料体験がまもなく終わります（2027年1月19日ごろ）。検索を続けるには Google Cloud でアップグレードし、1日の上限を300回に設定してください。</div>`);
   bind();
   if (aid && $("#" + aid)) { const el = $("#" + aid); el.focus(); try { if (pos != null) el.setSelectionRange(pos, pos); } catch {} }
   loadPhotos();
