@@ -11,4 +11,4 @@ export const firebaseConfig = {
 
 // Googleマップの店舗検索用のキー（空のときは OpenStreetMap で検索する）
 // Google Cloud で「このサイトからのみ使える」制限をかけたキーなので、公開しても他では使えません
-export const MAPS_API_KEY = "";
+export const MAPS_API_KEY = "AIzaSyBg1fNyHUInosy3oAb7neQahiPz9kps0Kc";
