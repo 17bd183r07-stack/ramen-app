@@ -60,6 +60,18 @@ service cloud.firestore {
       allow delete: if isMember() && resource.data.uid == me();
     }
 
+    // 再訪日記（行った日・ひとこと・小さな写真）。本人だけが書ける・消せる
+    match /visits/{visitId} {
+      allow read: if isMember();
+      allow create: if isMember() && request.resource.data.uid == me()
+        && onlyKeys(['uid', 'shopId', 'date', 'text', 'thumb', 'createdAt'])
+        && request.resource.data.shopId is string
+        && request.resource.data.date is string && request.resource.data.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && request.resource.data.text is string && request.resource.data.text.size() <= 1000
+        && (!('thumb' in request.resource.data) || request.resource.data.thumb.size() < 40000);
+      allow delete: if isMember() && resource.data.uid == me();
+    }
+
     // 大きな写真（縮小済み）。本人だけが書ける・消せる
     match /photos/{postId} {
       allow read: if isMember();

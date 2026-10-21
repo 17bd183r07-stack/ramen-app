@@ -29,11 +29,12 @@ const S = {
   shops: new Map(),     // id -> shop
   ranks: new Map(),     // uid -> {genre: [shopId]}
   posts: [],            // 新しい順
+  visits: [],           // 再訪日記（新しい順）
   invites: [],          // 管理者のみ
 };
 const photoCache = new Map();
 let unsubs = [];
-let tab = "shops", sub = null, rankGenre = "醤油", shopQuery = "", draft = null;
+let tab = "news", sub = null, rankGenre = "醤油", draft = null, diary = null, shopFrom = null;
 
 const memberName = uid => S.members.get(uid)?.name ?? "（退出したメンバー）";
 const myLists = () => S.ranks.get(S.user.uid) ?? {};
@@ -43,6 +44,9 @@ function genresOf(shopId){ const g = new Set(); S.ranks.forEach(r => Object.entr
 const latestPost = (uid, shopId, genre) => S.posts.find(p => p.uid === uid && p.shopId === shopId && p.genre === genre && p.text);
 const photoPosts = f => S.posts.filter(p => p.thumb && f(p));
 const fmtDate = p => { const d = p.createdAt?.toDate?.() ?? new Date(); return `${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()}`; };
+const ms = ts => ts?.toMillis?.() ?? Date.now();
+const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
+const fmtDay = ymd => { const [y, m, d] = ymd.split("-"); return `${y}/${+m}/${+d}`; };
 
 /* ---------- ログイン ---------- */
 onAuthStateChanged(auth, async user => {
@@ -66,7 +70,7 @@ onAuthStateChanged(auth, async user => {
 });
 
 function loginView(){
-  view(`<div class="center"><h1>部内ラーメン帖</h1><p>部内メンバー専用です。招待されたGoogleアカウントでログインしてください。</p>
+  view(`<div class="center"><h1>社内ラーメンマップ <span class="d">D</span></h1><p>社内メンバー専用です。招待されたGoogleアカウントでログインしてください。</p>
   <button class="google-btn" id="login"><svg width="20" height="20" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 13 4 4 13 4 24s9 20 20 20 20-9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>Googleでログイン</button></div>`);
   $("#login").onclick = async () => {
     try { await signInWithPopup(auth, new GoogleAuthProvider()); }
@@ -102,7 +106,7 @@ async function start(){
   const owner = await getDoc(doc(db, "meta", "owner"));
   S.isOwner = owner.exists() && owner.data().uid === S.user.uid;
   $("#tabs").hidden = false;
-  let ready = 0; const need = 4 + (S.isOwner ? 1 : 0);
+  let ready = 0; const need = 5 + (S.isOwner ? 1 : 0);
   const done = () => { if (++ready >= need) render(); else if (ready > need) render(); };
   const once = fn => { let first = true; return snap => { fn(snap); if (first) { first = false; done(); } else render(); }; };
   unsubs.push(onSnapshot(collection(db, "members"), once(s => { S.members = new Map(s.docs.map(d => [d.id, d.data()])); $("#whoami").textContent = memberName(S.user.uid) + "さん"; })));
@@ -111,21 +115,37 @@ async function start(){
   unsubs.push(onSnapshot(collection(db, "posts"), once(s => {
     S.posts = s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (b.createdAt?.toMillis?.() ?? Date.now()) - (a.createdAt?.toMillis?.() ?? Date.now()));
   })));
+  // 再訪日記。データの守り（firestore.rules）が古いままだと読めないので、そのときは空として扱う
+  const visitsDone = once(s => { S.visits = s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => ms(b.createdAt) - ms(a.createdAt)); S.visitsBlocked = false; });
+  let visitsFirst = true;
+  unsubs.push(onSnapshot(collection(db, "visits"), visitsDone, e => { console.error(e); S.visits = []; S.visitsBlocked = true; if (visitsFirst) { visitsFirst = false; done(); } }));
   if (S.isOwner) unsubs.push(onSnapshot(collection(db, "invites"), once(s => { S.invites = s.docs.map(d => d.id).sort(); })));
 }
 
 /* ---------- 画面 ---------- */
-function go(t, s = null){ tab = t; sub = s; render(); window.scrollTo(0, 0); }
+function go(t, s = null){
+  // お店の画面を開いたときは、戻る先（お知らせ・ランキングなど）を覚えておく
+  if (t === "shops" && s && tab !== "shops" && tab !== "diary") shopFrom = { tab, sub };
+  tab = t; sub = s; render(); window.scrollTo(0, 0);
+}
 document.querySelectorAll("nav.tabs button").forEach(b => b.onclick = () => { if (b.dataset.tab === "post" && tab !== "post") draft = null; go(b.dataset.tab); });
+
+// 日本語入力の変換中に画面を描き直すと文字が崩れるので、変換が終わるまで待つ
+let composing = false, renderPending = false;
+document.addEventListener("compositionstart", () => { composing = true; });
+document.addEventListener("compositionend", () => { composing = false; if (renderPending) { renderPending = false; setTimeout(render, 0); } });
 
 const TRIAL_NOTICE_FROM = "2027-01-17T00:00:00+09:00";
 
 function render(){
   if (!S.user) return;
+  if (composing) { renderPending = true; return; }
   // 入力中の欄があれば、カーソル位置を保ったまま描き直す
   const active = document.activeElement; const aid = active?.id; const pos = active?.selectionStart;
   document.querySelectorAll("nav.tabs button").forEach(b => b.dataset.tab === tab ? b.setAttribute("aria-current", "page") : b.removeAttribute("aria-current"));
-  if (tab === "shops") view(sub ? shopDetail(sub) : shopsView());
+  if (tab === "news") view(newsView());
+  if (tab === "shops") view(shopDetail(sub));
+  if (tab === "diary") view(diaryView());
   if (tab === "post") view(postView());
   if (tab === "rank") view(sub ? memberDetail(sub) : rankView());
   if (tab === "mine") view(mineView());
@@ -140,30 +160,34 @@ function render(){
 const thumbImg = (p, cls = "thumb") => `<img class="${cls}" src="${p.thumb}" alt="">`;
 const zoomBtn = p => `<button class="zoom" data-zoom="${p.id}">${thumbImg(p, "thumb sm")}</button>`;
 
-/* お店 */
-function shopsView(){
-  const q = shopQuery.trim();
-  const list = [...S.shops.values()].filter(s => !q || s.name.includes(q) || (s.area ?? "").includes(q))
-    .sort((a, b) => eaters(b.id).length - eaters(a.id).length || a.name.localeCompare(b.name, "ja"));
-  return `<h2>お店</h2>
-  <input class="field" id="shopq" type="search" placeholder="店名や地名で探す" value="${esc(shopQuery)}" autocomplete="off">
-  <div class="stack" style="margin-top:12px">
-  ${list.map(s => { const ph = photoPosts(p => p.shopId === s.id)[0]; return `<button class="shop" data-open="${s.id}">
-      ${ph ? thumbImg(ph) : `<span class="ph-none">写真なし</span>`}
-      <div class="body"><div class="name">${esc(s.name)}</div>
-      <div class="meta">${esc(s.area)}　${genresOf(s.id).map(g => `<span class="tag">${g}</span>`).join("")}</div></div>
-      <div class="count"><b>${eaters(s.id).length}</b>人が<br>食べた</div></button>`; }).join("") ||
-    `<p class="empty">${S.shops.size ? "見つかりません。" : "まだお店がありません。"}下の「評価する」から登録できます。</p>`}
-  </div>`;
+/* お知らせ（誰が何を登録したかを新しい順に） */
+function newsView(){
+  const items = [
+    ...S.posts.map(p => ({ t: ms(p.createdAt), kind: "post", p })),
+    ...S.visits.map(p => ({ t: ms(p.createdAt), kind: "visit", p })),
+    ...[...S.members.entries()].filter(([, m]) => m.joinedAt).map(([uid, m]) => ({ t: ms(m.joinedAt), kind: "join", uid })),
+  ].sort((a, b) => b.t - a.t).slice(0, 80);
+  const when = t => { const d = new Date(t); return `${d.getMonth()+1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")}`; };
+  const shopLink = id => `<button class="link shop-link" data-open-shop="${id}">${esc(shopName(id))}</button>`;
+  return `<h2>お知らせ</h2>
+  <div class="stack">${items.map(it => {
+    if (it.kind === "join") return `<div class="news"><div class="nb"><div><b>${esc(memberName(it.uid))}</b>さんが参加しました</div><div class="nt">${when(it.t)}</div></div></div>`;
+    const p = it.p;
+    const what = it.kind === "post"
+      ? `<b>${esc(memberName(p.uid))}</b>さんが ${shopLink(p.shopId)} を${p.genre}ランキング${p.rank ? `の${p.rank}位` : ""}に登録しました`
+      : `<b>${esc(memberName(p.uid))}</b>さんが ${shopLink(p.shopId)} に再訪しました（${fmtDay(p.date)}）`;
+    return `<div class="news ${it.kind}"><span class="kind">${it.kind === "post" ? "評価" : "日記"}</span><div class="nb"><div>${what}</div>${p.text ? `<div class="c">${esc(p.text)}</div>` : ""}<div class="nt">${when(it.t)}</div></div>${p.thumb ? zoomBtn(p) : ""}</div>`;
+  }).join("") || `<p class="empty">まだお知らせはありません。下の「評価する」からお店を登録してみましょう。</p>`}</div>`;
 }
 function shopDetail(id){
   const s = S.shops.get(id);
-  if (!s) return `<button class="link" data-back>‹ お店一覧</button><p class="empty">このお店は削除されました。</p>`;
+  if (!s) return `<button class="link" data-back>‹ 戻る</button><p class="empty">このお店は削除されました。</p>`;
   const rows = [];
   S.ranks.forEach((r, uid) => Object.entries(r).forEach(([g, l]) => { const i = l.indexOf(id); if (i >= 0 && S.members.has(uid)) rows.push({ uid, g, n: i + 1, of: l.length }); }));
   const maps = s.placeId ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(s.name)}&query_place_id=${s.placeId}` : s.lat ? `https://www.google.com/maps/search/?api=1&query=${s.lat},${s.lon}` : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(s.name + " " + (s.address ?? ""))}`;
   const ps = photoPosts(p => p.shopId === id);
-  return `<button class="link" data-back>‹ お店一覧</button>
+  const vs = S.visits.filter(v => v.shopId === id).sort((a, b) => b.date.localeCompare(a.date) || ms(b.createdAt) - ms(a.createdAt));
+  return `<button class="link" data-back>‹ 戻る</button>
   <div class="detail-head" style="margin-top:10px">
     <div class="name">${esc(s.name)}</div>
     <div class="note" ${s.placeId ? `data-gaddr="${esc(s.placeId)}"` : ""}>${s.placeId ? "住所を読み込み中…" : esc(s.address || "住所未登録")}</div>
@@ -175,7 +199,10 @@ function shopDetail(id){
   <h3>みんなの順位（${eaters(id).length}人が食べた）</h3>
   <div class="who-ranked">${rows.map(r => { const c = latestPost(r.uid, id, r.g); const p = photoPosts(x => x.uid === r.uid && x.shopId === id && x.genre === r.g)[0];
     return `<div class="r"><b>${esc(memberName(r.uid))}</b><div style="flex:1;min-width:0"><div>${r.g} ${r.n}位 <span class="note">（${r.of}店中）</span></div>${c ? `<div class="c">${esc(c.text)}</div>` : ""}</div>${p ? zoomBtn(p) : ""}</div>`; }).join("") || `<p class="empty">まだ誰も順位を付けていません。</p>`}</div>
-  <button class="primary" style="margin-top:16px" data-rate="${id}">この店を評価する</button>
+  <h3>再訪日記（${vs.length}件）</h3>
+  <div class="who-ranked">${vs.map(v => `<div class="r"><b>${esc(memberName(v.uid))}</b><div style="flex:1;min-width:0"><div>${fmtDay(v.date)}</div>${v.text ? `<div class="c">${esc(v.text)}</div>` : ""}</div>${v.thumb ? zoomBtn(v) : ""}</div>`).join("") || `<p class="empty">まだ再訪日記はありません。</p>`}</div>
+  <button class="primary" style="margin-top:16px" data-diary="${id}">再訪日記を書く</button>
+  <button class="ghost" style="margin-top:10px;width:100%" data-rate="${id}">この店を評価する（順位を付ける）</button>
   ${S.isOwner ? `<button class="link danger" style="margin-top:16px" data-delshop="${id}">このお店を削除する（管理者）</button>` : ""}
   <p class="src" style="margin-top:12px">${s.placeId ? "住所：Google マップ" : s.osm ? "店舗データ © OpenStreetMap contributors" : "メンバーが手入力で登録"}</p>`;
 }
@@ -215,6 +242,26 @@ function postView(){
   <div class="photo-pick">${d.photo ? `<div class="photo-prev"><img src="${d.photo}" alt="選んだ写真"><button data-unphoto aria-label="写真を外す">×</button></div><span class="note">この写真を付けます</span>` : `<label for="ph"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="6" width="18" height="14" rx="3"/><circle cx="12" cy="13" r="3.5"/><path d="M8.5 6l1.5-2h4l1.5 2"/></svg>写真を追加<input id="ph" type="file" accept="image/*"></label><span class="note">撮影またはアルバムから</span>`}</div>
   <textarea class="field" id="cm" maxlength="1000" placeholder="例：スープが濃厚。麺は硬めがおすすめ。" style="margin-top:10px">${esc(d.comment)}</textarea>
   <button class="primary" style="margin-top:14px" data-submit ${d.sending ? "disabled" : ""}>${d.sending ? "投稿中…" : "投稿する"}</button>`;
+  return h;
+}
+/* 再訪日記 */
+const emptyDiary = shopId => ({ shopId: shopId ?? "", date: today(), text: "", photo: null, thumb: null, sending: false, from: { tab, sub } });
+function diaryView(){
+  if (!diary) diary = emptyDiary();
+  const d = diary;
+  const mine = new Set(Object.values(myLists()).flat());
+  const shops = [...S.shops.values()].sort((a, b) => (mine.has(b.id) - mine.has(a.id)) || a.name.localeCompare(b.name, "ja"));
+  let h = `<button class="link" data-back>‹ 戻る</button><h2 style="margin-top:8px">再訪日記を書く</h2>`;
+  if (S.visitsBlocked) h += `<p class="notice">日記の保存先の準備がまだです。管理者が Firebase のルールを更新すると使えるようになります。</p>`;
+  if (!shops.length) return h + `<p class="empty">まだお店が登録されていません。先に「評価する」からお店を登録してください。</p>`;
+  h += `<div class="step">1　お店</div>
+  <select class="field" id="dshop" style="margin-top:6px"><option value="">お店を選ぶ</option>${shops.map(s => `<option value="${s.id}" ${s.id === d.shopId ? "selected" : ""}>${esc(s.name)}</option>`).join("")}</select>
+  <div class="step">2　行った日</div>
+  <input class="field" id="ddate" type="date" value="${d.date}" max="${today()}" style="margin-top:6px">
+  <div class="step">3　写真とひとこと（どちらもなくても可）</div>
+  <div class="photo-pick">${d.photo ? `<div class="photo-prev"><img src="${d.photo}" alt="選んだ写真"><button data-dunphoto aria-label="写真を外す">×</button></div><span class="note">この写真を付けます</span>` : `<label for="dph"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="6" width="18" height="14" rx="3"/><circle cx="12" cy="13" r="3.5"/><path d="M8.5 6l1.5-2h4l1.5 2"/></svg>写真を追加<input id="dph" type="file" accept="image/*"></label><span class="note">撮影またはアルバムから</span>`}</div>
+  <textarea class="field" id="dcm" maxlength="1000" placeholder="例：2回目。今日は味玉を追加。やっぱりうまい。" style="margin-top:10px">${esc(d.text)}</textarea>
+  <button class="primary" style="margin-top:14px" data-dsubmit ${d.sending ? "disabled" : ""}>${d.sending ? "保存中…" : "日記を保存する"}</button>`;
   return h;
 }
 function candidates(){
@@ -335,9 +382,12 @@ function mineView(){
   const myPosts = S.posts.filter(p => p.uid === S.user.uid);
   let h = `<h2>${esc(memberName(S.user.uid))}さんのページ</h2>
   <div class="row"><input class="field" id="rename" maxlength="20" value="${esc(memberName(S.user.uid))}" style="flex:1;min-width:0"><button class="ghost" data-rename>表示名を変更</button></div>
+  <button class="primary" style="margin-top:14px" data-diary="">再訪日記を書く</button>
   <p class="note" style="margin-top:14px">順位の入れ替えは ▲▼ で。自分の分だけ変更できます。</p>`;
-  h += gs.map(g => `<h3>${g}</h3><ol class="rank-list">${r[g].map((id, i) => `<li class="rank-row"><span class="n">${i + 1}位</span><span class="nm">${esc(shopName(id))}</span><span class="mv"><button aria-label="上げる" data-mv="${g}|${i}|-1" ${i === 0 ? "disabled" : ""}>▲</button><button aria-label="下げる" data-mv="${g}|${i}|1" ${i === r[g].length - 1 ? "disabled" : ""}>▼</button><button aria-label="外す" data-rm="${g}|${i}">×</button></span></li>`).join("")}</ol>`).join("") || `<p class="empty">まだ評価がありません。下の「評価する」から始めましょう。</p>`;
-  if (myPosts.length) h += `<h3>自分のコメントと写真</h3><div class="stack">${myPosts.map(p => `<div class="rank-row">${p.thumb ? zoomBtn(p) : ""}<span class="nm">${esc(shopName(p.shopId))}・${p.genre}<span class="cm">${esc(p.text || "（写真のみ）")}（${fmtDate(p)}）</span></span><button class="link danger" data-delpost="${p.id}">削除</button></div>`).join("")}</div>`;
+  h += gs.map(g => `<h3>${g}</h3><ol class="rank-list">${r[g].map((id, i) => `<li class="rank-row"><span class="n">${i + 1}位</span><span class="nm"><button class="link shop-link" data-open-shop="${id}">${esc(shopName(id))}</button></span><span class="mv"><button aria-label="上げる" data-mv="${g}|${i}|-1" ${i === 0 ? "disabled" : ""}>▲</button><button aria-label="下げる" data-mv="${g}|${i}|1" ${i === r[g].length - 1 ? "disabled" : ""}>▼</button><button aria-label="外す" data-rm="${g}|${i}">×</button></span></li>`).join("")}</ol>`).join("") || `<p class="empty">まだ評価がありません。下の「評価する」から始めましょう。</p>`;
+  if (myPosts.length) h += `<h3>自分のコメントと写真</h3><div class="stack">${myPosts.map(p => `<div class="rank-row">${p.thumb ? zoomBtn(p) : ""}<span class="nm">${esc(shopName(p.shopId))}・${p.genre}<span class="cm">${esc(p.text || (p.thumb ? "（写真のみ）" : "（コメントなし）"))}（${fmtDate(p)}）</span></span><button class="link danger" data-delpost="${p.id}">削除</button></div>`).join("")}</div>`;
+  const myVisits = S.visits.filter(v => v.uid === S.user.uid);
+  if (myVisits.length) h += `<h3>自分の再訪日記</h3><div class="stack">${myVisits.map(v => `<div class="rank-row">${v.thumb ? zoomBtn(v) : ""}<span class="nm">${esc(shopName(v.shopId))}・${fmtDay(v.date)}<span class="cm">${esc(v.text || "（写真のみ）")}</span></span><button class="link danger" data-delvisit="${v.id}">削除</button></div>`).join("")}</div>`;
   if (S.isOwner) {
     h += `<h3>メンバーの招待（管理者だけに表示）</h3>
     <p class="note">招待したいメンバーのGoogleアカウントのメールアドレスを入れてください。招待後、その人がアプリのURLを開いてログインすると参加できます。</p>
@@ -354,11 +404,13 @@ function mineView(){
 function bind(){
   const v = $("#view");
   const on = (sel, fn) => v.querySelectorAll(sel).forEach(b => b.onclick = () => fn(b));
-  on("[data-open]", b => go("shops", b.dataset.open));
   on("[data-open-shop]", b => go("shops", b.dataset.openShop));
-  on("[data-back]", () => go(tab));
+  on("[data-back]", () => {
+    if (tab === "shops") return go(shopFrom?.tab ?? "news", shopFrom?.sub ?? null);
+    if (tab === "diary") return go(diary?.from?.tab ?? "mine", diary?.from?.sub ?? null);
+    go(tab);
+  });
   on("[data-rate]", b => { draft = { ...emptyDraft(), shopId: b.dataset.rate }; go("post"); });
-  const sq = $("#shopq"); if (sq) sq.oninput = e => { shopQuery = e.target.value; render(); };
   const pq = $("#postq"); if (pq) pq.oninput = e => { draft.q = e.target.value; searchOsm(); refreshCands(); };
   bindCands();
   on("[data-reshop]", () => { draft = emptyDraft(); render(); });
@@ -373,6 +425,19 @@ function bind(){
   };
   on("[data-unphoto]", () => { draft.photo = draft.thumb = null; render(); });
   on("[data-submit]", submit);
+  on("[data-diary]", b => { diary = emptyDiary(b.dataset.diary); go("diary"); });
+  const ds = $("#dshop"); if (ds) ds.onchange = e => diary.shopId = e.target.value;
+  const dd = $("#ddate"); if (dd) dd.onchange = e => diary.date = e.target.value;
+  const dc = $("#dcm"); if (dc) dc.oninput = e => diary.text = e.target.value;
+  const dp = $("#dph"); if (dp) dp.onchange = async e => {
+    const f = e.target.files[0]; if (!f) return;
+    try { diary.photo = await shrink(f, 800, 0.75); diary.thumb = await shrink(f, 160, 0.6); render(); }
+    catch { toast("この写真は読み込めませんでした。別の写真を選んでください"); }
+  };
+  on("[data-dunphoto]", () => { diary.photo = diary.thumb = null; render(); });
+  on("[data-dsubmit]", submitDiary);
+  on("[data-delvisit]", async b => { try { const id = b.dataset.delvisit; const v = S.visits.find(x => x.id === id);
+    if (v?.thumb) await deleteDoc(doc(db, "photos", id)).catch(() => {}); await deleteDoc(doc(db, "visits", id)); toast("削除しました"); } catch (e) { console.error(e); toast("削除できませんでした"); } });
   on("[data-rg]", b => { rankGenre = b.dataset.rg; render(); });
   on("[data-member]", b => go("rank", b.dataset.member));
   on("[data-zoom]", b => zoom(b.dataset.zoom));
@@ -387,7 +452,7 @@ function bind(){
     try { await setDoc(doc(db, "invites", e), { at: serverTimestamp() }); $("#inv").value = ""; toast(`${e} を招待リストに追加しました`); } catch (err) { console.error(err); toast("追加できませんでした"); } });
   on("[data-uninvite]", async b => { try { await deleteDoc(doc(db, "invites", b.dataset.uninvite)); toast("招待を取り消しました"); } catch (e) { console.error(e); toast("取り消せませんでした"); } });
   on("[data-kick]", async b => { try { await deleteDoc(doc(db, "members", b.dataset.kick)); toast("メンバーから外しました"); } catch (e) { console.error(e); toast("外せませんでした"); } });
-  on("[data-delshop]", async b => { try { await deleteDoc(doc(db, "shops", b.dataset.delshop)); toast("お店を削除しました"); go("shops"); } catch (e) { console.error(e); toast("削除できませんでした"); } });
+  on("[data-delshop]", async b => { try { await deleteDoc(doc(db, "shops", b.dataset.delshop)); toast("お店を削除しました"); go("news"); } catch (e) { console.error(e); toast("削除できませんでした"); } });
   on("[data-logout]", () => signOut(auth));
 }
 function bindCands(){
@@ -438,9 +503,9 @@ async function submit(){
     const list = (myLists()[d.genre] ?? []).filter(x => x !== shopId);
     list.splice(d.pos, 0, shopId);
     await saveList(d.genre, list);
-    // 3. コメントと写真
-    if (d.comment.trim() || d.photo) {
-      const post = { uid: S.user.uid, shopId, genre: d.genre, text: d.comment.trim(), createdAt: serverTimestamp() };
+    // 3. 投稿（お知らせに載せるため、コメントや写真がなくても残す）
+    {
+      const post = { uid: S.user.uid, shopId, genre: d.genre, rank: d.pos + 1, text: d.comment.trim(), createdAt: serverTimestamp() };
       if (d.thumb) post.thumb = d.thumb;
       const ref = await addDoc(collection(db, "posts"), post);
       if (d.photo) { await setDoc(doc(db, "photos", ref.id), { uid: S.user.uid, data: d.photo }); photoCache.set(ref.id, d.photo); }
@@ -452,6 +517,25 @@ async function submit(){
   } catch (e) {
     console.error(e); d.sending = false; render();
     toast("投稿できませんでした。通信状態を確認して、もう一度押してください");
+  }
+}
+
+async function submitDiary(){
+  const d = diary; if (d.sending) return;
+  if (!d.shopId) return toast("お店を選んでください");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d.date)) return toast("行った日を選んでください");
+  d.sending = true; render();
+  try {
+    const v = { uid: S.user.uid, shopId: d.shopId, date: d.date, text: d.text.trim(), createdAt: serverTimestamp() };
+    if (d.thumb) v.thumb = d.thumb;
+    const ref = await addDoc(collection(db, "visits"), v);
+    if (d.photo) { await setDoc(doc(db, "photos", ref.id), { uid: S.user.uid, data: d.photo }); photoCache.set(ref.id, d.photo); }
+    const name = shopName(d.shopId); diary = null;
+    go("shops", d.shopId);
+    toast(`${name} の再訪日記を保存しました`);
+  } catch (e) {
+    console.error(e); d.sending = false; render();
+    toast(S.visitsBlocked ? "まだ日記を保存できません。管理者が Firebase のルールを更新する必要があります" : "保存できませんでした。通信状態を確認して、もう一度押してください");
   }
 }
 
@@ -480,9 +564,9 @@ function loadPhotos(){
   document.querySelectorAll("img[data-full]").forEach(async im => { const d = await fullPhoto(im.dataset.full).catch(() => null); if (d && im.isConnected) im.src = d; });
 }
 async function zoom(id){
-  const p = S.posts.find(x => x.id === id); if (!p) return;
+  const p = S.posts.find(x => x.id === id) ?? S.visits.find(x => x.id === id); if (!p) return;
   const box = document.createElement("div"); box.className = "lightbox"; box.setAttribute("role", "dialog");
-  box.innerHTML = `<img src="${p.thumb}" alt=""><p>${esc(memberName(p.uid))}・${esc(shopName(p.shopId))}・${p.genre}・${fmtDate(p)}${p.text ? `<br>${esc(p.text)}` : ""}</p><button>閉じる</button>`;
+  box.innerHTML = `<img src="${p.thumb}" alt=""><p>${esc(memberName(p.uid))}・${esc(shopName(p.shopId))}・${p.date ? `再訪 ${fmtDay(p.date)}` : `${p.genre}・${fmtDate(p)}`}${p.text ? `<br>${esc(p.text)}` : ""}</p><button>閉じる</button>`;
   box.onclick = e => { if (e.target === box || e.target.tagName === "BUTTON") box.remove(); };
   document.body.appendChild(box); box.querySelector("button").focus();
   const d = await fullPhoto(id).catch(() => null); if (d && box.isConnected) box.querySelector("img").src = d;

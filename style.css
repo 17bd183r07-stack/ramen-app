@@ -129,3 +129,15 @@ nav.tabs .post .dot svg { width: 22px; height: 22px; }
 .danger { color: var(--accent); }
 .loading { color: var(--muted); padding: 40px 0; text-align: center; }
 .notice { background: var(--accent-soft); color: var(--ink); border: 1px solid var(--accent); border-radius: 12px; padding: 12px 14px; margin: 0 0 16px; font-size: 14px; line-height: 1.6; }
+/* 題名の「D」 */
+.brand .d { color: #dc0032; font-family: var(--font-body); font-weight: 900; font-style: italic; margin-left: 4px; letter-spacing: 0; }
+h1 .d { color: #dc0032; font-style: italic; }
+/* お知らせ */
+.news { display: flex; gap: 10px; align-items: flex-start; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
+.news .kind { flex: none; font-size: 11px; padding: 1px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); margin-top: 2px; }
+.news.visit .kind { background: var(--broth-soft); color: var(--broth); }
+.news .nb { flex: 1; min-width: 0; font-size: 14px; }
+.news .c { font-size: 13px; color: var(--muted); margin-top: 2px; }
+.news .nt { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.shop-link { color: inherit; font-weight: 700; text-align: left; padding: 0; text-decoration: underline; text-underline-offset: 3px; }
+select.field { appearance: auto; }

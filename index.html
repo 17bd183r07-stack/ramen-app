@@ -4,14 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#f4f5f2">
-<meta name="apple-mobile-web-app-title" content="ラーメン帖">
-<title>部内ラーメン帖</title>
+<meta name="apple-mobile-web-app-title" content="ラーメンマップD">
+<title>社内ラーメンマップ D</title>
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700;900&family=Noto+Sans+JP:wght@400;500;700&display=swap">
-<link rel="stylesheet" href="style.css?v=6">
+<link rel="stylesheet" href="style.css?v=7">
 <style>
   :root { padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
   body { margin: 0; }
@@ -23,7 +23,7 @@
 <body>
 <div class="wrap">
   <header class="top">
-    <div class="brand"><span class="naruto" aria-hidden="true"></span>部内ラーメン帖</div>
+    <div class="brand"><span class="naruto" aria-hidden="true"></span>社内ラーメンマップ<span class="d">D</span></div>
     <span class="who" id="whoami"></span>
   </header>
   <main id="view"><p class="loading">読み込み中…</p></main>
@@ -31,13 +31,13 @@
 
 <nav class="tabs" aria-label="画面の切り替え" id="tabs" hidden>
   <div class="in">
-    <button data-tab="shops"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>お店</button>
+    <button data-tab="news"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2.2 2.2 0 0 0 4 0"/></svg>お知らせ</button>
     <button data-tab="post" class="post"><span class="dot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg></span>評価する</button>
     <button data-tab="rank"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20h16M7 20v-6M12 20V6M17 20v-9"/></svg>ランキング</button>
     <button data-tab="mine"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8.5" r="3.8"/><path d="M4.5 20c1.4-3.6 4.2-5.2 7.5-5.2s6.1 1.6 7.5 5.2"/></svg>マイページ</button>
   </div>
 </nav>
 
-<script type="module" src="app.js?v=6"></script>
+<script type="module" src="app.js?v=7"></script>
 </body>
 </html>
